@@ -3,7 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package dev.nklab.examplejfr;
+package example_app;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.quarkus.runtime.ShutdownEvent;
@@ -11,10 +11,8 @@ import io.quarkus.runtime.StartupEvent;
 import java.io.IOException;
 import java.text.ParseException;
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicLong;
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.event.Observes;
-import jdk.jfr.Configuration;
 import jdk.jfr.consumer.RecordingStream;
 
 /**
@@ -32,20 +30,25 @@ public class MetricsRegister {
     }
 
     public void onStartup(@Observes StartupEvent se) throws IOException, ParseException {
-        // micrometer向けにカスタムのgaugeを作成
-        var myGauge1 = registry.gauge("my_memoryGauge1", new AtomicLong(0));
-        var myGauge2 = registry.gauge("my_memoryGauge2", new AtomicLong(0));
+        // micrometer向けにカスタムのカウンターを作成
+        var slowCounter = registry.counter("my_request_slow");
+        var totalCounter = registry.counter("my_request_all");
 
-        // load `default` JFR configuration
-        var c = Configuration.getConfiguration("default");
-        recordingStream = new RecordingStream(c);
+        // JFRイベントを購読
+        recordingStream = new RecordingStream();
+        recordingStream.enable("myprofile.HttpRequest").withPeriod(Duration.ofNanos(1));
+        recordingStream.onEvent("myprofile.HttpRequest", event -> {
+            // JFRからHTTP Requestの実行時間を取得
+            var url = event.getString("url");
+            var sec = event.getDuration().getSeconds();
+            var nano = event.getDuration().getNano();
+            System.out.println("url:" + url + ", sec:" + sec + ", nano:" + nano);
 
-        // 指定したJFRイベントのコミット時に毎回実行される
-        recordingStream.enable("jdk.PhysicalMemory").withPeriod(Duration.ofSeconds(1));
-        recordingStream.onEvent("jdk.PhysicalMemory", event -> {
-            // JFRからOSのメモリ情報を取得してmicrometerに記録する
-            myGauge1.set(event.getLong("totalSize"));
-            myGauge2.set(event.getLong("usedSize"));
+            // micrometerのメトリクスを更新
+            totalCounter.increment();
+            if (sec >= 3) {
+                slowCounter.increment();
+            }
         });
         recordingStream.startAsync();
     }
